@@ -1,5 +1,7 @@
 import os
 import re
+import json
+import csv
 
 ##################################################
 ### DataSet class contains all log information ###
@@ -24,7 +26,7 @@ class SList(list):
                 result[key].append(item)
             else:
                 result[key] = [item]
-        return SList([(key, result[key]) for key in result])
+        return SList([(key, SList(result[key])) for key in result])
 
     def get_element_count(self, key):
         '''
@@ -71,12 +73,33 @@ class SList(list):
         '''
         return SList([map_func(item) for item in self])
 
+    def flatmap(self, map_func):
+        '''
+            Semantics are similar to spark
+            Input: map function
+            Output: dataset
+        '''
+        result = SList()
+        for item in self:
+            result += map_func(item)
+        return result
+
     def distinct(self):
         '''
             Return a distinct element set
             Note: The order will be changed
         '''
         return SList(list(set(self)))
+
+    def find_by(self, target_func):
+        '''
+            Return the first item fits target_func
+            Return False if nothing fits
+        '''
+        for item in self:
+            if target_func(item):
+                return item
+        return False
 
 class DataSet:
 
@@ -89,18 +112,137 @@ class DataSet:
             self.timestamp = info_list[1:6]
             self.file_path = file_info[0]
             self.log_type = -1
+            self._operation_list = []
+            self.experiment = -1
+            if len(file_info) > 6:
+                self.experiment = info_list[-1]
+
             if file_info[1] == '.shellhistory.log':
                 self.log_type = LOG_TYPE_SHELL
             elif file_info[1] == '.editor.log':
-                self.log_type == LOG_TYPE_EDITOR
+                self.log_type = LOG_TYPE_EDITOR
             else:
                 print "Unknown log type: {}".format(file_info[1])
+
+        def get_content(self):
+            with open(self.file_path, 'r') as f_in:
+                return f_in.read()
+
+        def get_operation_list(self):
+            if len(self._operation_list) > 0:
+                return SList(self._operation_list)
+
+            file_content = self.get_content()
+            if self.log_type == LOG_TYPE_SHELL:
+                self._parse_shell_operation(file_content)
+            elif self.log_type == LOG_TYPE_EDITOR:
+                self._parse_editor_operation(file_content)
+
+            return SList(self._operation_list)
+
+        def combine_shell_input(self):
+            if self.log_type != LOG_TYPE_SHELL:
+                print 'Cannot apply combine operation on non-shell log!'
+                return
+
+            CHARACTER = [8, 9] + range(32,128)
+            OMITTED_CMD = ['27', '13', '916827', '796627', '916527', '916727', '796527', '916627', '796727', '916513', '795827']
+            self.cmd_list = SList([])
+            self.timestamp_list = SList([])
+
+            tem_cmd = []
+            tem_stamp = []
+            for item in self._operation_list:
+                op = self._strip_operation(item)
+                if int(op) in CHARACTER:
+                    tem_cmd.append(op)
+                    if self.has_timestamp:
+                        tem_stamp.append(int(item[0]))
+                    continue
+                tem_cmd.append(op)
+                tem_stamp.append(int(item[0]))
+                if not ''.join(tem_cmd) in OMITTED_CMD:
+                    if self.has_timestamp:
+                        self.timestamp_list.append((tem_stamp[0], item[0]))
+                        starting_timestamp = item[0]
+                    self.cmd_list.append(self._convert_to_text(tem_cmd))
+                # self.cmd_list.append([op])
+                tem_cmd = []
+                tem_stamp = []
+            return self
+
+        def combine_editor_input(self):
+            prev_command = False
+            self.cmd_list = SList([])
+            for item in self._operation_list:
+                if not prev_command:
+                    prev_command = item
+                    continue
+                if prev_command['action'] == item['action'] and item['action'] in ['insert', 'remove']:
+                    if item['action'] == 'insert' and str(prev_command['end']) == str(item['start']):
+                        prev_command['lines'][0] += item['lines'][0]
+                        prev_command['end'] = item['end']
+                    elif item['action'] == 'remove' and str(prev_command['start']) == str(item['end']):
+                        prev_command['lines'][0] += item['lines'][0]
+                        prev_command['start'] = item['start']
+                else:
+                    self.cmd_list.append(prev_command)
+                    prev_command = item
+            self.cmd_list.append(prev_command)
+            return self
+
+        def _convert_to_text(self, cmd):
+            text = ''
+            for c in cmd:
+                if int(c) in range(32,128):
+                    text += chr(int(c))
+                elif int(c) == 8:
+                    text += ' [DELETE] '
+                elif int(c) == 9:
+                    text += ' [TAB] '
+                elif int(c) == 13:
+                    text += ' [RETURN] '
+                elif int(c) == 27:
+                    text += ' [ESC] '
+                else:
+                    text == ' [c] '
+            return text
+
+        def _parse_shell_operation(self, log_content):
+            self._operation_list = re.findall(re.compile('[0-9]{10} [0-9]+'), log_content)
+            if len(self._operation_list) == 0:
+                self.has_timestamp = False
+                self._operation_list = re.findall(re.compile('[0-9]+'), log_content)
+            else:
+                self.has_timestamp = True
+                self._operation_list = [item.split(' ') for item in self._operation_list]
+
+        def _parse_editor_operation(self, log_content):
+            lines = log_content.split("\n")
+            for line in lines:
+                if len(line) != 0:
+                    self._operation_list.append(json.loads(line))
+
+        def _strip_operation(self, item):
+            if type(item).__name__ == 'str':
+                return item
+            else:
+                return item[1]
+
+        def filter_editor_log(self, operation_list):
+            self._operation_list = filter(lambda x: x['action'] in operation_list, self._operation_list)
+            return self
+
+        # def filter_cmd_log(self, operation_list):
+        #     self._cmd_list = filter(lambda x: x['action'] in operation_list, self._operation_list)
+        #     return self
+
 
     ###############################################
     ### root_path: The root path for shell logs ###
     ###############################################
     def __init__(self, root_path):
-        self.NAME_PATTERN = re.compile('(.*)([0-9]{2})_([0-9]{2})_([0-9]{4})_([0-9]{2})_([0-9]{2}).log_?$')
+        self.NAME_PATTERN = re.compile('(.*)([0-9]{2})_([0-9]{2})_([0-9]{4})_([0-9]{2})_([0-9]{2})\+?([0-9]+)?.log_?$')
         self.item_set = SList()
 
         os.chdir(root_path)
@@ -122,7 +264,6 @@ class DataSet:
         for item in file_list:
             self.item_set.append(self.DataItem(info, item))
 
-
     ################################################
     ### Get all files contained in the directory ###
     ################################################
@@ -138,3 +279,17 @@ class DataSet:
                 print 'ERROR::Detect an item that is neither file nor directory.'
                 print "\t {}".format(tem_path)
         return file_set
+
+####################################
+### Retrieve student information ###
+####################################
+class StudentInformation(dict):
+    def read_file(self, root_path, course_list):
+        for course in course_list:
+            with open(os.path.join(root_path, "{}.csv".format(course)), 'r') as f_in:
+                content = csv.reader(f_in)
+                for line in content:
+                    if line[4] in self:
+                        print 'User appeared in both courses: {}'.format(line[4])
+                        continue
+                    self[line[4]] = course
