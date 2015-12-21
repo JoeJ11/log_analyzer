@@ -2,6 +2,7 @@ import os
 import re
 import json
 import csv
+import codecs
 
 ##################################################
 ### DataSet class contains all log information ###
@@ -127,7 +128,7 @@ class DataSet:
                 print "Unknown log type: {}".format(file_info[1])
 
         def get_content(self):
-            with open(self.file_path, 'r') as f_in:
+            with codecs.open(self.file_path, 'r', 'utf-8') as f_in:
                 return f_in.read()
 
         def filter_shell_input(self):
@@ -180,11 +181,11 @@ class DataSet:
                 if not prev_command:
                     prev_command = item
                     continue
-                if prev_command['action'] == item['action'] and item['action'] in ['insert', 'remove']:
-                    if item['action'] == 'insert' and str(prev_command['end']) == str(item['start']):
+                if prev_command['action'] == item['action'] and item['action'] in [u'insert', u'remove']:
+                    if item['action'] == u'insert' and str(prev_command['end']) == str(item['start']):
                         prev_command['lines'][0] += item['lines'][0]
                         prev_command['end'] = item['end']
-                    elif item['action'] == 'remove' and str(prev_command['start']) == str(item['end']):
+                    elif item['action'] == u'remove' and str(prev_command['start']) == str(item['end']):
                         prev_command['lines'][0] += item['lines'][0]
                         prev_command['start'] = item['start']
                 else:
@@ -234,7 +235,7 @@ class DataSet:
                     self.operation_list.append(('0', tmp_list))
 
         def _parse_editor_operation(self, log_content):
-            lines = log_content.split("\n")
+            lines = log_content.split(u"\n")
             for line in lines:
                 if len(line) != 0:
                     self.operation_list.append(json.loads(line))
@@ -308,3 +309,24 @@ class StudentInformation(dict):
                         print 'User appeared in both courses: {}'.format(line[4])
                         continue
                     self[line[4]] = course
+
+##############################
+### Get code file template ###
+##############################
+class CodeTemplate(dict):
+    def read_file(self, root_path, course_list):
+        for course in course_list:
+            with codecs.open(os.path.join(root_path, "Template_{}.txt".format(course)), 'r', 'utf-8') as f_in:
+                self[course] = f_in.read()
+        self._generate_line_splitter()
+
+    def strip_template(self, content):
+        content_lines = content.split(u"\n")
+        content_lines = filter(lambda x: not filter(lambda y: not y in [u"\n", u"\t", u' ', u"\r"], x) in self.splitter, content_lines)
+        return u"\n".join(content_lines)
+
+    def _generate_line_splitter(self):
+        self.splitter = []
+        for key in self:
+            for line in self[key].split("\n"):
+                self.splitter.append(filter(lambda x: not x in [u"\n", u"\t", u' ', u"\r"], line))

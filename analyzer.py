@@ -2,7 +2,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
+from sklearn.cluster import DBSCAN
 from scipy import stats
+import codecs
+import matplotlib.pyplot as plt
 
 import data_reader
 import report_tools
@@ -98,7 +101,7 @@ def freq_statistics(filtered_shell_log, user_info):
         print '\t Significant levels: {}'.format(sig_level)
 
 def cmd_counting(cmd_list):
-    tmp_data = cmd_list.flatmap(lambda x: x.cmd_list).map(lambda x: str(x))
+    tmp_data = cmd_list.flatmap(lambda x: x.cmd_list).map(lambda x: x[0])
     tmp_data = tmp_data.group_by(lambda x: x).map(lambda x: (x[0], len(x[1])))
     pre_counter = tmp_data.count()
     tmp_data = tmp_data.filter_by(lambda x: x[1] < 1000 and x[1] > 5)
@@ -237,3 +240,137 @@ def get_example():
         print item.user_name
         with open('all_{}.html'.format(index), 'w') as f_out:
             f_out.write(report_tools.print_log_item(item))
+
+def editor_behavior_analysis(filtered_editor_log, code_template, user_info):
+    def get_operation_history(session_history):
+        result = []
+        for session in session_history:
+            result += session.cmd_list
+        return result
+    def split_history(cmd_history, op_list):
+        tmp_session = []
+        result = []
+        for item in cmd_history:
+            tmp_session.append(item)
+            if item['action'] in op_list:
+                result.append(tmp_session)
+                tmp_session = []
+        return filter(lambda x: len(x) > 0, result)
+
+    editor_cmd_data = filtered_editor_log.map(lambda x: x.filter_editor_log([u'insert', u'remove', u'paste', u'copy', u'save', u'open'])).map(lambda x: x.combine_editor_input())
+
+    # plot_data = editor_cmd_data.flatmap(lambda x: x.cmd_list).filter_by(lambda x: x['action']=='paste').map(lambda x: x['text'])
+    # with codecs.open('middle_paste.txt', 'w', 'utf-8') as f_out:
+    #     f_out.write("\n***************************\n".join(plot_data.filter_by(lambda x: len(x)>1000 and len(x)<3000)))
+    # with codecs.open('long_paste.txt', 'w', 'utf-8') as f_out:
+    #     f_out.write("\n***************************\n".join(plot_data.filter_by(lambda x: len(x)>4000)))
+    # with codecs.open('short_paste.txt', 'w', 'utf-8') as f_out:
+    #     f_out.write("\n***************************\n".join(plot_data.filter_by(lambda x: len(x)<1000)))
+    template_filtered_data = editor_cmd_data.flatmap(lambda x: x.cmd_list).filter_by(lambda x: x['action']==u'paste').map(lambda x: x['text'])
+    template_filtered_data = template_filtered_data.map(lambda x: code_template.strip_template(x))
+    fig, ax = report_tools.prepare_plot(gridWidth=0.5)
+    ax.hist(template_filtered_data.map(lambda x: len(x)).filter_by(lambda x: x<1000), 50)
+    plt.title('Histogram on filtered pasted content length')
+    plt.savefig('hist_filtered_pasted_content.png')
+
+    with codecs.open('middle_filtered_paste.txt', 'w', 'utf-8') as f_out:
+        f_out.write("\n***************************\n".join(template_filtered_data.filter_by(lambda x: len(x)>1000 and len(x)<3000)))
+    with codecs.open('long_filtered_paste.txt', 'w', 'utf-8') as f_out:
+        f_out.write("\n***************************\n".join(template_filtered_data.filter_by(lambda x: len(x)>4000)))
+    with codecs.open('short_filtered_paste.txt', 'w', 'utf-8') as f_out:
+        f_out.write("\n***************************\n".join(template_filtered_data.filter_by(lambda x: len(x)<1000)))
+
+
+    # fig, ax = report_tools.prepare_plot(gridWidth=0.5)
+    # ax.hist(plot_data.map(lambda x: len(x)).filter_by(lambda x: x<1000), 50)
+     #plt.title('Histogram on length of pasted contents')
+    # plt.xlabel('Length of pasted content')
+    # plt.savefig('hist_length_pasted_content.png')
+
+    student_history_data = editor_cmd_data.group_by(lambda x: x.user_name).map(lambda x: (x[0], get_operation_history(x[1])))
+    tmp_data = student_history_data.map(lambda x: (x[0], split_history(x[1], ['save', 'open'])))
+
+    fig, ax = report_tools.prepare_plot(gridWidth=0.5)
+    ax.hist(tmp_data.map(lambda x: len(x[1])), 50)
+    plt.title('Histogram on number of editor sessions')
+    plt.xlabel('Number of editor sessions')
+    plt.savefig('hist_editor_session.png')
+
+    tmp_data = student_history_data.map(lambda x: filter(lambda y: y['action']=='paste', x[1])).map(lambda x: "\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n".join([item['text'] for item in x]))
+    counting_data = tmp_data.group_by(lambda x: x).map(lambda x: (x[0], len(x[1]))).sort_by(lambda x: -x[1])
+    with codecs.open('pasted_content.txt', 'w', 'utf-8') as f_out:
+        for item in counting_data:
+            f_out.write(str(item[1]))
+            f_out.write("\n\n")
+            f_out.write(item[0])
+            f_out.write("\n****************************************************************************\n")
+    fig, ax = report_tools.prepare_plot(gridWidth=0.5)
+    ax.hist(tmp_data.map(lambda x: len(x)), 50)
+    plt.title('Histogram on length of pasted content')
+    plt.xlabel('Length of pasted content')
+    plt.savefig('hist_pasted_content.png')
+
+def editor_input_clustering(filtered_editor_log, code_template, user_info):
+    editor_cmd_data = filtered_editor_log.map(lambda x: x.filter_editor_log(['insert', 'remove', 'paste', 'copy', 'save', 'open'])).map(lambda x: x.combine_editor_input())
+    insert_data = editor_cmd_data.flatmap(lambda x: x.cmd_list).filter_by(lambda x: x['action']==u'insert').map(lambda x: x['lines'][0])
+    template_filtered_data = editor_cmd_data.flatmap(lambda x: x.cmd_list).filter_by(lambda x: x['action']==u'paste').map(lambda x: x['text'])
+    template_filtered_data = template_filtered_data.map(lambda x: code_template.strip_template(x))
+    total_input = data_reader.SList(insert_data + template_filtered_data.flatmap(lambda x: x.split(u"\n")))
+    total_input = total_input.filter_by(lambda x: len(x)>0)
+    print len(total_input)
+    feature_set = _generate_feature_set(total_input)
+    print len(feature_set)
+    # pca = PCA(n_components=2)
+    # pca.fit(feature_set)
+    # plot_data = pca.transform(feature_set)
+
+    # fig, ax = report_tools.prepare_plot()
+    # ax.scatter([item[0] for item in plot_data], [item[1] for item in plot_data])
+    # plt.title('Scatter plot on editor input')
+    # plt.savefig('scatter_editor_input.png')
+
+    # fig = plt.figure()
+    # ax = fig.add_subplot(111, projection='3d')
+    # ax.scatter([item[0] for item in plot_data], [item[1] for item in plot_data], [item[2] for item in plot_data])
+    # plt.title('Scatter plot on editor input')
+    # plt.savefig('3d_scatter_editor_input.png')
+
+    db = DBSCAN(eps=1000, min_samples=100).fit(feature_set)
+    labels = db.labels_
+    result  = zip(labels, total_input)
+    print len(set(labels))
+    for label in len(set(labels)):
+        with codecs.open("clustering_{}.txt".format(label), 'r', 'utf-8') as f_out:
+            tmp_result = filter(lambda x: x[0]==label, result)
+            f_out.write("Size of cluster: {}\n".format(len(tmp_result)))
+            for item in tmp_result:
+                f_out.write("{}\n".format(item[1]))
+
+def _generate_feature_set(editor_input):
+    editor_input = [filter(lambda x: x!="\t" and x!="\r", x) for x in editor_input]
+    SHINGLE_LENGTH=2
+    ROUND = 100
+    global_map = {}
+    def _generate_shingle_dict(input_line):
+        for index in range(len(input_line)-SHINGLE_LENGTH):
+            tem_key = input_line[index:index+SHINGLE_LENGTH]
+            if not global_map.has_key(tem_key):
+                global_map[tem_key] = len(global_map)
+    def _generate_feature(all_input):
+        round_map = np.arange(len(global_map))
+        result = [[] for i in range(len(all_input))]
+        for rd in range(ROUND):
+            np.random.shuffle(round_map)
+            for tem_index, item in enumerate(all_input):
+                smallest_val = len(global_map)
+                for index in range(len(item)-SHINGLE_LENGTH):
+                    tem_key = item[index:index+SHINGLE_LENGTH]
+                    if round_map[global_map[tem_key]] < smallest_val:
+                        smallest_val = round_map[global_map[tem_key]]
+                result[tem_index].append(smallest_val)
+        return result
+
+    for item in editor_input:
+        _generate_shingle_dict(item)
+    print len(global_map)
+    return _generate_feature(editor_input)
