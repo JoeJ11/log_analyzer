@@ -112,15 +112,17 @@ class DataSet:
             self.timestamp = info_list[1:6]
             self.file_path = file_info[0]
             self.log_type = -1
-            self._operation_list = []
+            self.operation_list = []
             self.experiment = -1
             if len(file_info) > 6:
                 self.experiment = info_list[-1]
 
             if file_info[1] == '.shellhistory.log':
                 self.log_type = LOG_TYPE_SHELL
+                self._parse_operation_list()
             elif file_info[1] == '.editor.log':
                 self.log_type = LOG_TYPE_EDITOR
+                self._parse_operation_list()
             else:
                 print "Unknown log type: {}".format(file_info[1])
 
@@ -128,53 +130,53 @@ class DataSet:
             with open(self.file_path, 'r') as f_in:
                 return f_in.read()
 
-        def get_operation_list(self):
-            if len(self._operation_list) > 0:
-                return SList(self._operation_list)
-
-            file_content = self.get_content()
-            if self.log_type == LOG_TYPE_SHELL:
-                self._parse_shell_operation(file_content)
-            elif self.log_type == LOG_TYPE_EDITOR:
-                self._parse_editor_operation(file_content)
-
-            return SList(self._operation_list)
+        def filter_shell_input(self):
+            if self.log_type != LOG_TYPE_SHELL:
+                print 'Cannot apply combine operation on non-shell log!'
+                return
+            new_list = []
+            for item in self.operation_list:
+                if len(item[1]) > 1 and '27' in item[1]:
+                    continue
+                if len(filter(lambda x: int(x)<0, item[1])) > 0:
+                    continue
+                if '4' in item[1]:
+                    continue
+                new_list.append((item[0], item[1]))
+            self.operation_list = new_list
+            return self
 
         def combine_shell_input(self):
             if self.log_type != LOG_TYPE_SHELL:
                 print 'Cannot apply combine operation on non-shell log!'
                 return
 
-            CHARACTER = [8, 9] + range(32,128)
-            OMITTED_CMD = ['27', '13', '916827', '796627', '916527', '916727', '796527', '916627', '796727', '916513', '795827']
             self.cmd_list = SList([])
-            self.timestamp_list = SList([])
-
+            # self.timestamp_list = SList([])
+            CHARACTER = [8, 9] + range(32,128)
             tem_cmd = []
-            tem_stamp = []
-            for item in self._operation_list:
-                op = self._strip_operation(item)
-                if int(op) in CHARACTER:
-                    tem_cmd.append(op)
-                    if self.has_timestamp:
-                        tem_stamp.append(int(item[0]))
+            tem_timestamp = []
+            for item in self.operation_list:
+                if len(item[1]) > 1 and '27' in item[1]:
                     continue
-                tem_cmd.append(op)
-                tem_stamp.append(int(item[0]))
-                if not ''.join(tem_cmd) in OMITTED_CMD:
-                    if self.has_timestamp:
-                        self.timestamp_list.append((tem_stamp[0], item[0]))
-                        starting_timestamp = item[0]
-                    self.cmd_list.append(self._convert_to_text(tem_cmd))
-                # self.cmd_list.append([op])
-                tem_cmd = []
-                tem_stamp = []
+                if len(filter(lambda x: int(x)<0, item[1])) > 0:
+                    continue
+                if '4' in item[1]:
+                    continue
+                for op in item[1]:
+                    tem_timestamp.append(item[0])
+                    tem_cmd.append(op)
+                    if not int(op) in CHARACTER:
+                        self.cmd_list.append((self._convert_to_text(tem_cmd), int(tem_timestamp[0]), int(tem_timestamp[-1])))
+                        # self.cmd_list.append(self._convert_to_text(tem_cmd))
+                        tem_cmd = []
+                        tem_timestamp = []
             return self
 
         def combine_editor_input(self):
             prev_command = False
             self.cmd_list = SList([])
-            for item in self._operation_list:
+            for item in self.operation_list:
                 if not prev_command:
                     prev_command = item
                     continue
@@ -194,34 +196,48 @@ class DataSet:
         def _convert_to_text(self, cmd):
             text = ''
             for c in cmd:
-                if int(c) in range(32,128):
+                if int(c) in range(32,127):
                     text += chr(int(c))
                 elif int(c) == 8:
-                    text += ' [DELETE] '
+                    text += ' [BACKSPACE] '
                 elif int(c) == 9:
                     text += ' [TAB] '
                 elif int(c) == 13:
                     text += ' [RETURN] '
                 elif int(c) == 27:
                     text += ' [ESC] '
+                elif int(c) == 127:
+                    text += ' [DELETE]'
                 else:
-                    text == ' [c] '
+                    text == " [{}] ".format(c)
             return text
 
+        def _parse_operation_list(self):
+            file_content = self.get_content()
+            if self.log_type == LOG_TYPE_SHELL and len(file_content) > 0:
+                self._parse_shell_operation(file_content)
+            elif self.log_type == LOG_TYPE_EDITOR and len(file_content) > 0:
+                self._parse_editor_operation(file_content)
+
         def _parse_shell_operation(self, log_content):
-            self._operation_list = re.findall(re.compile('[0-9]{10} [0-9]+'), log_content)
-            if len(self._operation_list) == 0:
+            self.operation_list = re.findall(re.compile('[0-9]{10} [0-9]+'), log_content)
+            if len(self.operation_list) == 0:
                 self.has_timestamp = False
-                self._operation_list = re.findall(re.compile('[0-9]+'), log_content)
             else:
                 self.has_timestamp = True
-                self._operation_list = [item.split(' ') for item in self._operation_list]
+            for line in log_content.split("\n"):
+                tmp_list = filter(None, line.split(' '))
+                if len(tmp_list) > 1 and self.has_timestamp:
+                    tmp_timestamp = tmp_list[0]
+                    self.operation_list.append((tmp_timestamp, filter(lambda x: x!=tmp_timestamp, tmp_list)))
+                elif len(tmp_list) > 0 and not self.has_timestamp:
+                    self.operation_list.append(('0', tmp_list))
 
         def _parse_editor_operation(self, log_content):
             lines = log_content.split("\n")
             for line in lines:
                 if len(line) != 0:
-                    self._operation_list.append(json.loads(line))
+                    self.operation_list.append(json.loads(line))
 
         def _strip_operation(self, item):
             if type(item).__name__ == 'str':
@@ -230,11 +246,10 @@ class DataSet:
                 return item[1]
 
         def filter_editor_log(self, operation_list):
-            self._operation_list = filter(lambda x: x['action'] in operation_list, self._operation_list)
+            self.operation_list = filter(lambda x: x['action'] in operation_list, self.operation_list)
             return self
-
         # def filter_cmd_log(self, operation_list):
-        #     self._cmd_list = filter(lambda x: x['action'] in operation_list, self._operation_list)
+        #     self._cmd_list = filter(lambda x: x['action'] in operation_list, self.operation_list)
         #     return self
 
 

@@ -162,12 +162,13 @@ def editor_basics(filtered_editor_log):
     print filtered_editor_log.flatmap(lambda x: x.get_operation_list()).filter_by(lambda x: x['action']=='copy')[0]
 
 def _generate_counter_list(data_list):
-    def _strip_operation(item):
-        if type(item).__name__ == 'str':
-            return item
-        else:
-            return item[1]
-    tmp_list = data_list.flatmap(lambda x: x.get_operation_list()).map(lambda x: _strip_operation(x))
+    def _strip_input(op_list):
+        result = []
+        for item in op_list:
+            for op in item[1]:
+                result.append(op)
+        return result
+    tmp_list = data_list.flatmap(lambda x: _strip_input(x.operation_list))
     tmp_list = tmp_list.group_by(lambda x: x).map(lambda x: (x[0], len(x[1])))
     return tmp_list
 
@@ -182,3 +183,57 @@ def _convert_freq(counter_list):
     for item in counter_list:
         tmp_sum += item[1]
     return data_reader.SList([(item[0], float(item[1])/float(tmp_sum)) for item in counter_list])
+
+def get_example():
+    example = cmd_data.filter_by(lambda x: x.has_timestamp and len(x.cmd_list) > 50).sort_by(lambda x: len(x.cmd_list))[0]
+    example_ = editor_cmd_data.find_by(lambda x: x.user_name == example.user_name and str(x.timestamp) == str(example.timestamp))
+    combined_output = report_tools.print_log_item_with_time(example) + report_tools.print_log_item_with_time(example_)
+    combined_output = sorted(combined_output, key=lambda x: x[1])
+    print example.file_path
+    with open('example_1_shell.html', 'w') as f_out:
+        f_out.write(report_tools.print_log_item(example))
+    with open('example_1_editor.html', 'w') as f_out:
+        f_out.write(report_tools.print_log_item(example_).encode('utf8'))
+    with open('example_1.html', 'w') as f_out:
+        for item in combined_output:
+            f_out.write(item[0].encode('utf8'))
+        # f_out.write("\n".join([item[0] for item in combined_output]).encode('utf8'))
+
+    example = cmd_data.filter_by(lambda x: len(x.cmd_list) > 50).sort_by(lambda x: len(x.cmd_list))[1]
+    example_ = editor_cmd_data.find_by(lambda x: x.user_name == example.user_name and str(x.timestamp) == str(example.timestamp))
+    print example.file_path
+    with open('example_2_shell.html', 'w') as f_out:
+        f_out.write(report_tools.print_log_item(example))
+    with open('example_2_editor.html', 'w') as f_out:
+        f_out.write(report_tools.print_log_item(example_).encode('utf8'))
+
+
+    example = cmd_data.filter_by(lambda x: x.timestamp[0]=='02' and x.timestamp[1]=='12' and x.timestamp[2]=='2015' and x.user_name == 'wqf15@mails.tsinghua.edu.cn')
+    print [item.timestamp for item in example]
+
+    example_1 = example[0]
+    example_2 = editor_cmd_data.find_by(lambda x: x.user_name == example_1.user_name and str(x.timestamp) == str(example_1.timestamp))
+    with open('course_shell.html', 'w') as f_out:
+        f_out.write(report_tools.print_log_item(example_1))
+    if example_2:
+        with open('course_editor.html', 'w') as f_out:
+            f_out.write(report_tools.print_log_item(example_2))
+
+
+    example = cmd_data.filter_by(lambda x: x.timestamp[0]=='02' and x.timestamp[1]=='12' and x.timestamp[2]=='2015' and x.user_name == 'wei.xu.0@gmail.com')
+    print [item.timestamp for item in example]
+
+    example_1 = example[1]
+    example_2 = editor_cmd_data.find_by(lambda x: x.user_name == example_1.user_name and str(x.timestamp) == str(example_1.timestamp))
+    with open('wei_shell.html', 'w') as f_out:
+        f_out.write(report_tools.print_log_item(example_1))
+    if example_2:
+        with open('wei_editor.html', 'w') as f_out:
+            f_out.write(report_tools.print_log_item(example_2))
+
+    example = cmd_data.filter_by(lambda x: x.timestamp[0]=='02' and x.timestamp[1]=='12' and x.timestamp[2]=='2015' and x.timestamp[3] in ['03', '04'])
+
+    for index, item in enumerate(example):
+        print item.user_name
+        with open('all_{}.html'.format(index), 'w') as f_out:
+            f_out.write(report_tools.print_log_item(item))
