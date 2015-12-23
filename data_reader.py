@@ -174,6 +174,35 @@ class DataSet:
                         tem_timestamp = []
             return self
 
+        def combien_insertion_remove(self):
+            prev_command = False
+            self.cmd_list = SList([])
+            for item in self.operation_list:
+                item['lines'][0] = u"\n".join(item['lines'])
+                if not prev_command:
+                    prev_command = item
+                    continue
+                if (prev_command['action'], item['action']) in [(u'insert', u'remove'), (u'insert', u'insert'), (u'remove', u'remove')]:
+                    if item['action'] == u'insert' and prev_command['action'] == u'insert' and str(prev_command['end']) == str(item['start']):
+                        prev_command['lines'][0] += item['lines'][0]
+                        prev_command['end'] = item['end']
+                    elif item['action'] == u'remove' and str(prev_command['start']) == str(item['end']):
+                        prev_command['lines'][0] += item['lines'][0]
+                        prev_command['start'] = item['start']
+                    elif item['action'] == u'insert' and prev_command['action'] == u'remove' and str(prev_command['end']) == str(item['end']):
+                        prev_length = len(prev_command['lines'][0])
+                        tem_length = len(item['lines'][0])
+                        if prev_length-tem_length<0:
+                            prev_command['lines'][0] = item['lines'][0][:tem_length-prev_length]
+                            prev_command['action'] = u'remove'
+                        else:
+                            prev_command['lines'][0] = prev_length['lines'][0][:tem_length-prev_length]
+                else:
+                    self.cmd_list.append(prev_command)
+                    prev_command = item
+            self.cmd_list.append(prev_command)
+            return self
+
         def combine_editor_input(self):
             prev_command = False
             self.cmd_list = SList([])
@@ -314,9 +343,9 @@ class StudentInformation(dict):
 ### Get code file template ###
 ##############################
 class CodeTemplate(dict):
-    def read_file(self, root_path, course_list):
+    def read_file(self, root_path, course_list, prefix='Template'):
         for course in course_list:
-            with codecs.open(os.path.join(root_path, "Template_{}.txt".format(course)), 'r', 'utf-8') as f_in:
+            with codecs.open(os.path.join(root_path, "{}_{}.txt".format(prefix, course)), 'r', 'utf-8') as f_in:
                 self[course] = f_in.read()
         self._generate_line_splitter()
 
@@ -330,3 +359,23 @@ class CodeTemplate(dict):
         for key in self:
             for line in self[key].split("\n"):
                 self.splitter.append(filter(lambda x: not x in [u"\n", u"\t", u' ', u"\r"], line))
+
+class Ankors(dict):
+    def read_file(self, root_path, course_list, prefix='Ankor'):
+        for course in course_list:
+            with codecs.open(os.path.join(root_path, "{}_{}.txt".format(prefix, course)), 'r', 'utf-8') as f_in:
+                self[course] = f_in.read()
+        self._generate_line_splitter()
+
+    def _generate_line_splitter(self):
+        self.splitter = []
+        for key in self:
+            for line in self[key].split("\n"):
+                if len(line) > 0:
+                    self.splitter.append(line)
+
+    def assign_label(self, labels):
+        self.labels = labels
+        with open('ankor_label.txt', 'w') as f_out:
+            for item in zip(labels, self.splitter):
+                f_out.write("{}\n{}\n\n".format(item[0], item[1]))

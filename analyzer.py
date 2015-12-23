@@ -2,10 +2,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
-from sklearn.cluster import DBSCAN
+from sklearn.cluster import Birch
 from scipy import stats
 import codecs
 import matplotlib.pyplot as plt
+import json
 
 import data_reader
 import report_tools
@@ -310,15 +311,25 @@ def editor_behavior_analysis(filtered_editor_log, code_template, user_info):
     plt.xlabel('Length of pasted content')
     plt.savefig('hist_pasted_content.png')
 
-def editor_input_clustering(filtered_editor_log, code_template, user_info):
+def editor_input_clustering(filtered_editor_log, code_template, user_info, ankors):
+    def _unicode(c):
+        if u'\u4e00' <= c <= u'\u9fff':
+            return False
+        try:
+            c.decode('ascii')
+        except UnicodeDecodeError:
+            return False
+        except UnicodeEncodeError:
+            return False
+        return True
     editor_cmd_data = filtered_editor_log.map(lambda x: x.filter_editor_log(['insert', 'remove', 'paste', 'copy', 'save', 'open'])).map(lambda x: x.combine_editor_input())
     insert_data = editor_cmd_data.flatmap(lambda x: x.cmd_list).filter_by(lambda x: x['action']==u'insert').map(lambda x: x['lines'][0])
     template_filtered_data = editor_cmd_data.flatmap(lambda x: x.cmd_list).filter_by(lambda x: x['action']==u'paste').map(lambda x: x['text'])
     template_filtered_data = template_filtered_data.map(lambda x: code_template.strip_template(x))
     total_input = data_reader.SList(insert_data + template_filtered_data.flatmap(lambda x: x.split(u"\n")))
-    total_input = total_input.filter_by(lambda x: len(x)>0)
+    total_input = total_input.filter_by(lambda x: len(filter(lambda y: not y in [u"\n", u"\t", u"\r", u" "] and _unicode(y), x))>5)
     print len(total_input)
-    feature_set = _generate_feature_set(total_input)
+    feature_set, ankor_set = _generate_feature_set(total_input,ankors.splitter)
     print len(feature_set)
     # pca = PCA(n_components=2)
     # pca.fit(feature_set)
@@ -335,19 +346,43 @@ def editor_input_clustering(filtered_editor_log, code_template, user_info):
     # plt.title('Scatter plot on editor input')
     # plt.savefig('3d_scatter_editor_input.png')
 
-    db = DBSCAN(eps=1000, min_samples=100).fit(feature_set)
-    labels = db.labels_
+    # db = Birch().fit(feature_set)
+    # labels = db.labels_
+    model = KMeans(n_clusters=300)
+    labels = model.fit_predict(feature_set)
     result  = zip(labels, total_input)
+    size_list = []
+    cluster_list = []
     print len(set(labels))
-    for label in len(set(labels)):
-        with codecs.open("clustering_{}.txt".format(label), 'r', 'utf-8') as f_out:
-            tmp_result = filter(lambda x: x[0]==label, result)
-            f_out.write("Size of cluster: {}\n".format(len(tmp_result)))
-            for item in tmp_result:
-                f_out.write("{}\n".format(item[1]))
+    for label in set(labels):
+        tmp_result = filter(lambda x: x[0]==label, result)
+        if len(tmp_result) > 100:
+            size_list.append(len(tmp_result))
+            cluster_list.append(label)
+            with codecs.open("clustering_{}.txt".format(label), 'w', 'utf-8') as f_out:
+                f_out.write(u"Size of cluster: {}\n".format(len(tmp_result)))
+                for item in tmp_result:
+                    f_out.write(u"{}\n".format(item[1]))
+    fig, ax = report_tools.prepare_plot(figsize=(20, 5))
+    ind = np.arange(len(size_list))
+    width = 0.5
+    ax.bar(ind, size_list, width)
+    ax.set_xticks(ind+width)
+    ax.set_xticklabels(['C{}'.format(i) for i in cluster_list], rotation='90')
+    plt.title('Cluster size')
+    plt.savefig('cluster_size.png')
 
-def _generate_feature_set(editor_input):
+    ankor_label = model.predict(ankor_set)
+    with open('ankor_label.txt', 'w') as f_out:
+        for item in zip(ankors.splitter, ankor_label):
+            f_out.write("{}\n{}\n\n".format(item[0], item[1]))
+
+    with open('model.json', 'w') as f_out:
+        json.dump(model.get_params(), f_out)
+
+def _generate_feature_set(editor_input, ankors):
     editor_input = [filter(lambda x: x!="\t" and x!="\r", x) for x in editor_input]
+    ankors = [filter(lambda x: x!="\t" and x!="\r", x) for x in ankors]
     SHINGLE_LENGTH=2
     ROUND = 100
     global_map = {}
@@ -369,8 +404,24 @@ def _generate_feature_set(editor_input):
                         smallest_val = round_map[global_map[tem_key]]
                 result[tem_index].append(smallest_val)
         return result
-
     for item in editor_input:
         _generate_shingle_dict(item)
-    print len(global_map)
-    return _generate_feature(editor_input)
+    print 'Table size: {}'.format(len(global_map))
+    with codecs.open('global_map.txt', 'w', 'utf-8') as f_out:
+        for key in global_map:
+            f_out.write(key)
+            f_out.write('\n')
+    all_feature = _generate_feature(editor_input+ankors)
+    return all_feature[:len(editor_input)], all_feature[len(editor_input):]
+
+def editor_insertion_behavior(filtered_editor_log, code_template, user_info):
+    editor_cmd_data = filtered_editor_log.map(lambda x: x.filter_editor_log(['insert', 'remove', 'paste', 'copy', 'save', 'open'])).map(lambda x: x.combine_editor_input())
+    insert_data = editor_cmd_data.flatmap(lambda x: x.cmd_list).filter_by(lambda x: x['action']==u'insert').map(lambda x: x['lines'][0])
+    print len(insert_data)
+    tmp_data = insert_data.map(lambda x: len(x))
+    fig, ax = report_tools.prepare_plot()
+    ax.hist(tmp_data.filter_by(lambda x: x<100), 50)
+    plt.title('Histogram on length of inserted contents')
+    plt.savefig('hist_length_inserted.png')
+
+    print editor_cmd_data.flatmap(lambda x: x.cmd_list).filter_by(lambda x: x['action']==u'insert' and len(x['lines'])>1).count()

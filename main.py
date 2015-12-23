@@ -6,15 +6,18 @@ import os
 import data_reader
 import report_tools
 import analyzer
+import cluster_analyzer
 
 data_path = sys.argv[1]
 output_path = os.path.abspath(os.path.join(os.getcwd(), sys.argv[2]))
 
-student_file_root = os.path.abspath(os.path.join(data_path, '..'))
-user_info = data_reader.StudentInformation()
-user_info.read_file(student_file_root, ['Course_A', 'Course_B', 'General'])
-code_template = data_reader.CodeTemplate()
-code_template.read_file(student_file_root, ['Hadoop', 'Spark'])
+data_root = os.path.abspath(os.path.join(data_path, '..'))
+# user_info = data_reader.StudentInformation()
+# user_info.read_file(student_file_root, ['Course_A', 'Course_B', 'General'])
+# code_template = data_reader.CodeTemplate()
+# code_template.read_file(student_file_root, ['Hadoop', 'Spark'])
+# ankors = data_reader.Ankors()
+# ankors.read_file(student_file_root, ['Hadoop'])
 
 data = data_reader.DataSet(data_path)
 data_set = data.item_set
@@ -32,6 +35,9 @@ filtered_shell_log = shell_log.filter_by(lambda x: len(x.operation_list)!=0)
 print 'Number of Non-empty shell log: {}'.format(filtered_shell_log.count())
 print 'Number non-empty editor log: {}'.format(filtered_editor_log.count())
 
+cluster = cluster_analyzer.ClusteringAnalyzer(filtered_editor_log, data_root)
+cluster.analyze()
+
 # shell_cmd_data = filtered_shell_log.flatmap(lambda x: x.operation_list)
 # shell_cmd_data = filtered_shell_log.map(lambda x: x.combine_shell_input())
 
@@ -43,7 +49,8 @@ print 'Number non-empty editor log: {}'.format(filtered_editor_log.count())
 # analyzer.freq_statistics(new_shell_log, user_info)
 
 # analyzer.editor_behavior_analysis(filtered_editor_log, code_template, user_info)
-analyzer.editor_input_clustering(filtered_editor_log, code_template, user_info)
+# analyzer.editor_input_clustering(filtered_editor_log, code_template, user_info, ankors)
+# analyzer.editor_insertion_behavior(filtered_editor_log, code_template, user_info)
 # cmd_data = filtered_shell_log.map(lambda x: x.combine_shell_input())
 # editor_cmd_data = filtered_editor_log.map(lambda x: x.filter_editor_log(['insert', 'remove', 'paste', 'copy', 'save', 'open'])).map(lambda x: x.combine_editor_input())
 
