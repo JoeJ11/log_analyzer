@@ -8,6 +8,7 @@ import codecs
 import matplotlib.pyplot as plt
 import json
 import pickle
+import os
 
 import data_reader
 import report_tools
@@ -16,23 +17,26 @@ SHINGLE_LENGTH=2
 ROUND = 100
 
 class ClusteringAnalyzer:
-    def __init__(self, filtered_editor_log, data_root):
+    def __init__(self, filtered_editor_log, data_root, reload=False):
         self.data = filtered_editor_log.map(lambda x: x.filter_editor_log(['insert', 'remove', 'paste', 'copy', 'save', 'open'])).map(lambda x: x.combine_editor_input())
         self.user_info = data_reader.StudentInformation()
         self.user_info.read_file(data_root, ['Course_A', 'Course_B', 'General'])
         self.code_template = data_reader.CodeTemplate()
         self.code_template.read_file(data_root, ['Hadoop', 'Spark'])
-        self.ankors = data_reader.Ankors()
-        self.ankors.read_file(data_root, ['Hadoop'])
+        self.anchors = data_reader.Anchors()
+        self.anchors.read_file(data_root, ['Hadoop'])
+        if reload:
+            self._load()
+        else:
+            self.global_map = {}
+            self.round_maps = []
         self.cache_table = {}
-        self.global_map = {}
-        self.round_maps = []
-
 
     def analyze(self):
         self.set_up()
-        self.clustering_ankors()
-        self._dump()
+        self.clustering_anchors()
+        # self._dump()
+        self.student_anchors()
 
     def set_up(self):
         editor_training_set = self.data.flatmap(lambda x: x.cmd_list).filter_by(lambda x: x['action']==u'paste').map(lambda x: x['text'])
@@ -45,9 +49,9 @@ class ClusteringAnalyzer:
         self._generate_model(training_data)
         self._output_training_result(init_training_data)
 
-    def clustering_ankors(self):
-        ankor_label = [self.predict(item) for item in self.ankors.splitter]
-        self.ankors.assign_label(ankor_label)
+    def clustering_anchors(self):
+        anchor_label = [self.predict(item) for item in self.anchors.splitter]
+        self.anchors.assign_label(anchor_label)
 
     def predict(self, input_line):
         filtered_line = self._filter_line(input_line)
@@ -57,6 +61,60 @@ class ClusteringAnalyzer:
             label = self.model.predict([self._convert_feature(filtered_line)])[0]
             self.cache_table[filtered_line] = label
             return label
+
+    def student_anchors(self):
+        def _unwrap_contents(item_list):
+            result = []
+            for item in item_list:
+                result += item[1]
+            return result
+        tmp_data = self.data.sort_by(lambda x: x.timestamp).map(lambda x: (x.user_name, self._get_content(x.cmd_list)))
+        tmp_data = tmp_data.group_by(lambda x: x[0]).map(lambda x: (x[0], _unwrap_contents(x[1])))
+        tmp_data = tmp_data.map(lambda x: (x[0], filter(lambda y: self._is_anchor(y), x[1]))).map(lambda x: (x[0], [self.predict(item) for item in x[1]]))
+        plot_data = tmp_data.map(lambda x: (x[0], set(x[1]))).map(lambda x: len(x[1]))
+        fig, ax = report_tools.prepare_plot()
+        ax.hist(plot_data)
+        plt.title('Histogram on number of anchors detected per student')
+        plt.savefig('hist_number_anchors.png')
+
+        plot_data = data_reader.SList([item[1][0] for item in tmp_data.filter_by(lambda x: len(x[1]) > 0)])
+        plot_data = plot_data.group_by(lambda x: x).map(lambda x: (x[0], len(x[1])))
+        plot_x = [item[0] for item in plot_data]
+        plot_y = [item[1] for item in plot_data]
+        fig, ax = report_tools.prepare_plot()
+        ind = np.arange(len(plot_x))
+        width = 0.5
+        ax.bar(ind, plot_y)
+        ax.set_xticks(ind+width)
+        ax.set_xticklabels(plot_x)
+        plt.title('Distribution of first appeared anchor')
+        plt.savefig('first_anchor.png')
+
+        plot_data = data_reader.SList([item[1][-1] for item in tmp_data.filter_by(lambda x: len(x[1]) > 0)])
+        plot_data = plot_data.group_by(lambda x: x).map(lambda x: (x[0], len(x[1])))
+        plot_x = [item[0] for item in plot_data]
+        plot_y = [item[1] for item in plot_data]
+        fig, ax = report_tools.prepare_plot()
+        ind = np.arange(len(plot_x))
+        width = 0.5
+        ax.bar(ind, plot_y)
+        ax.set_xticks(ind+width)
+        ax.set_xticklabels(plot_x)
+        plt.title('Distribution of last appeared anchor')
+        plt.savefig('last_anchor.png')
+
+    def _is_anchor(self, item):
+        label = self.predict(item)
+        return label in self.anchors.labels
+
+    def _get_content(self, item_list):
+        result = []
+        for item in item_list:
+            if item['action'] == 'paste':
+                result.append(self.code_template.strip_template(item['text']))
+            elif item['action'] == 'insert':
+                result.append(item['lines'][0])
+        return result
 
     def _unicode(self, c):
         if u'\u4e00' <= c <= u'\u9fff':
@@ -133,10 +191,18 @@ class ClusteringAnalyzer:
         plt.title('Cluster size')
         plt.savefig('cluster_size.png')
 
-    def _dump(self, ):
-        with open('model.p', 'wb') as f_out:
-            pickle.dump(self, f_out)
+    def _dump(self):
+        with open('model/round_maps.p', 'w') as f_out:
+            pickle.dump(self.round_maps, f_out)
+        with open('model/global_map.json', 'w') as f_out:
+            pickle.dump(self.global_map, f_out)
+        with open('model/model.p', 'wb') as f_out:
+            pickle.dump(self.model, f_out)
 
-    def _load(self, file_path):
-        with open(file_path, 'rb') as f_in:
-            self = pickle.load(f_in)
+    def _load(self):
+        with open('model/round_maps.p', 'r') as f_in:
+            self.round_maps = pickle.load(f_in)
+        with open('model/global_map.json', 'r') as f_in:
+            self.global_map = pickle.load(f_in)
+        with open('model/model.p', 'rb') as f_in:
+            self.model = pickle.load(f_in)

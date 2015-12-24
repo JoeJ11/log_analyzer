@@ -360,8 +360,8 @@ class CodeTemplate(dict):
             for line in self[key].split("\n"):
                 self.splitter.append(filter(lambda x: not x in [u"\n", u"\t", u' ', u"\r"], line))
 
-class Ankors(dict):
-    def read_file(self, root_path, course_list, prefix='Ankor'):
+class Anchors(dict):
+    def read_file(self, root_path, course_list, prefix='Anchor'):
         for course in course_list:
             with codecs.open(os.path.join(root_path, "{}_{}.txt".format(prefix, course)), 'r', 'utf-8') as f_in:
                 self[course] = f_in.read()
@@ -376,6 +376,6 @@ class Ankors(dict):
 
     def assign_label(self, labels):
         self.labels = labels
-        with open('ankor_label.txt', 'w') as f_out:
+        with open('anchor_label.txt', 'w') as f_out:
             for item in zip(labels, self.splitter):
                 f_out.write("{}\n{}\n\n".format(item[0], item[1]))

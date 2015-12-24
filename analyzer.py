@@ -425,3 +425,40 @@ def editor_insertion_behavior(filtered_editor_log, code_template, user_info):
     plt.savefig('hist_length_inserted.png')
 
     print editor_cmd_data.flatmap(lambda x: x.cmd_list).filter_by(lambda x: x['action']==u'insert' and len(x['lines'])>1).count()
+
+def user_insertion_length(filtered_editor_log, filtered_shell_log, code_template, user_info):
+    def _get_content(item_list):
+        result = []
+        for item in item_list:
+            if item['action'] == 'paste':
+                result.append(code_template.strip_template(item['text']))
+            elif item['action'] == 'insert':
+                result.append(item['lines'][0])
+        return result
+
+    def _merge_content(item_list):
+        result = ''
+        for item in item_list:
+            result += u"\n".join(item[1])
+        return result
+    editor_cmd_data = filtered_editor_log.map(lambda x: x.filter_editor_log(['insert', 'remove', 'paste', 'copy', 'save', 'open'])).map(lambda x: x.combine_editor_input())
+    tmp_data = editor_cmd_data.map(lambda x: (x.user_name, _get_content(x.cmd_list)))
+    tmp_data = tmp_data.group_by(lambda x: x[0]).map(lambda x: (x[0], _merge_content(x[1]))).filter_by(lambda x: len(x[1])>0)
+    plot_data = tmp_data.map(lambda x: len(x[1]))
+    fig, ax = report_tools.prepare_plot()
+    ax.hist(plot_data, 50)
+    plt.title('Histogram on user input length')
+    plt.savefig('hist_user_input.png')
+
+    plot_x = []
+    plot_y = []
+    for item in tmp_data.filter_by(lambda x: x[0] in user_info):
+        if user_info[item[0]] == 'Course_A':
+            plot_x.append(len(item[1]))
+        elif user_info[item[0]] == 'Course_B':
+            plot_y.append(len(item[1]))
+    fig, ax = report_tools.prepare_plot()
+    ax.hist([plot_x, plot_y], 50, label=['Course_A', 'Course_B'])
+    plt.title('Histogram on user input length')
+    plt.legend()
+    plt.savefig('hist_user_input_comparison.png')
