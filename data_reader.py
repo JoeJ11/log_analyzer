@@ -330,14 +330,19 @@ class DataSet:
 ####################################
 class StudentInformation(dict):
     def read_file(self, root_path, course_list):
+        self.user_info = {}
         for course in course_list:
             with open(os.path.join(root_path, "{}.csv".format(course)), 'r') as f_in:
-                content = csv.reader(f_in)
-                for line in content:
-                    if line[4] in self:
-                        print 'User appeared in both courses: {}'.format(line[4])
+                content = csv.DictReader(f_in)
+                for row in content:
+                    if row['email'] in self:
+                        print 'User appeared in both courses: {}'.format(row['email'])
                         continue
-                    self[line[4]] = course
+                    self[row['email']] = course
+                    self.user_info[row['email']] = row
+
+    def get_info(self, user_name, info_name):
+        return self.user_info[user_name][info_name]
 
 ##############################
 ### Get code file template ###
