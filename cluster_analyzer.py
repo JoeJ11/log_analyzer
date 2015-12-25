@@ -192,17 +192,17 @@ class ClusteringAnalyzer:
         plt.savefig('cluster_size.png')
 
     def _dump(self):
-        with open('model/round_maps.p', 'w') as f_out:
+        with open('../model/round_maps.p', 'wb') as f_out:
             pickle.dump(self.round_maps, f_out)
-        with open('model/global_map.json', 'w') as f_out:
-            pickle.dump(self.global_map, f_out)
-        with open('model/model.p', 'wb') as f_out:
+        with open('../model/global_map.json', 'w') as f_out:
+            json.dump(self.global_map, f_out)
+        with open('../model/model.p', 'wb') as f_out:
             pickle.dump(self.model, f_out)
 
     def _load(self):
-        with open('model/round_maps.p', 'r') as f_in:
+        with open('../model/round_maps.p', 'rb') as f_in:
             self.round_maps = pickle.load(f_in)
-        with open('model/global_map.json', 'r') as f_in:
-            self.global_map = pickle.load(f_in)
-        with open('model/model.p', 'rb') as f_in:
+        with open('../model/global_map.json', 'r') as f_in:
+            self.global_map = json.load(f_in)
+        with open('../model/model.p', 'rb') as f_in:
             self.model = pickle.load(f_in)
