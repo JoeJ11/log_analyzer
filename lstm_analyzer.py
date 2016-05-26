@@ -15,11 +15,12 @@ from analyzer import Analyzer
 
 logging.basicConfig(filename=os.path.join(config.WORK_DIR, 'log', 'lstm_debug.log'), level=logging.DEBUG)
 logging.basicConfig(filename=os.path.join(config.WORK_DIR, 'log', 'lstm_info.log'), level=logging.INFO)
-TOKEN_PATTERN = '[a-zA-Z0-9\_]+|[\+\-\*\/\>\<\=]+'
+# TOKEN_PATTERN = '[a-zA-Z0-9\_]+|[\+\-\*\/\>\<\=]+'
+TOKEN_PATTERN = 'while|if|for|import|class|public|private|try|catch|else|new|throws|static|extends|[a-zA-Z0-9\_\+\-\*\/\=\{\}\[\]\;\(\)\.\:\?\!\\\"\\\'\,]'
 NUM_EPOCHS = 100
-SEQ_LENGTH = 20
-N_HIDDEN = 64
-PREDICTION_LENGTH = 30
+SEQ_LENGTH = 30
+N_HIDDEN = 128
+PREDICTION_LENGTH = 100
 
 CODE_SNIPPET_1 = '''
                 JSONObject js = new JSONObject(value.toString());
@@ -29,18 +30,10 @@ CODE_SNIPPET_1 = '''
                     context.write(userID, new Text("t")); // text
                 '''
 CODE_SNIPPET_2 = '''
-                String s = tokenizer.nextToken();
-                JSONObject js = new JSONObject(s);
-
-                if (js.has("user_id"))                      // 
-                {
-                    try {
-                    userId.set(js.optString("user_id"));
-                    } catch (JSONException e)
-                    {
-                        System.out.println(s);
-                    }
-                    context.write(userId, one);
+            for (Text val : values) {
+                String value = val.toString();
+                if (value.charAt(0) == 't') {
+                    sum++;
 '''
 
 class LSTM_Analyzer(Analyzer):
@@ -98,10 +91,13 @@ class LSTM_Analyzer(Analyzer):
         predict = theano.function([input_var], T.argmax(network_output, axis=1))
 
         # Cost function
-        cross_entro = theano.function([input_var, target_var], cost.mean())
+        cross_entro = theano.function([input_var, target_var], loss)
 
         print("Training start.")
         for epoch in range(NUM_EPOCHS):
+            if (epoch+1) % 10 == 0:
+                np.savez('model/model_{}.npz'.format(epoch/10), *lasagne.layers.get_all_param_values(network))
+
             loss_cnt = 0.
             for input_batch, target_batch in self._training_data():
                 loss_cnt += train_fn(input_batch, target_batch)
@@ -203,9 +199,12 @@ class LSTM_Analyzer(Analyzer):
         print('Output:')
         logging.info('Output:')
 
+        output_sequence = ''
         for item in sequence:
-            print('{} '.format(self.id2wd[np.argmax(item)]))
-            logging.info('{} '.format(self.id2wd[np.argmax(item)]))
+            output_sequence += self.id2wd[np.argmax(item)]
+
+        print(output_sequence)
+        logging.info(output_sequence)
 
     def prepare(self):
         return
