@@ -15,12 +15,12 @@ from analyzer import Analyzer
 
 logging.basicConfig(filename=os.path.join(config.WORK_DIR, 'log', 'lstm_debug.log'), level=logging.DEBUG)
 logging.basicConfig(filename=os.path.join(config.WORK_DIR, 'log', 'lstm_info.log'), level=logging.INFO)
-# TOKEN_PATTERN = '[a-zA-Z0-9\_]+|[\+\-\*\/\>\<\=]+'
-TOKEN_PATTERN = 'while|if|for|import|class|public|private|try|catch|else|new|throws|static|extends|[a-zA-Z0-9\_\+\-\*\/\=\{\}\[\]\;\(\)\.\:\?\!\\\"\\\'\,]'
+TOKEN_PATTERN = '[a-zA-Z0-9\_]+|[\+\-\*\/\>\<\=]+'
+# TOKEN_PATTERN = 'while|if|for|import|class|public|private|try|catch|else|new|throws|static|extends|[a-zA-Z0-9\_\+\-\*\/\=\{\}\[\]\;\(\)\.\:\?\!\\\"\\\']'
 NUM_EPOCHS = 100
-SEQ_LENGTH = 30
-N_HIDDEN = 128
-PREDICTION_LENGTH = 100
+SEQ_LENGTH = 20
+N_HIDDEN = 64
+PREDICTION_LENGTH = 20
 
 CODE_SNIPPET_1 = '''
                 JSONObject js = new JSONObject(value.toString());
@@ -51,8 +51,8 @@ class LSTM_Analyzer(Analyzer):
 
         # We now build the LSTM layer which takes l_in as the input layer
         # We clip the gradients at GRAD_CLIP to prevent the problem of exploding gradients. 
-        network = lasagne.layers.LSTMLayer(network, N_HIDDEN, nonlinearity=lasagne.nonlinearities.tanh)
-        network = lasagne.layers.LSTMLayer(network, N_HIDDEN, nonlinearity=lasagne.nonlinearities.tanh)
+        network = lasagne.layers.LSTMLayer(network, N_HIDDEN, nonlinearity=lasagne.nonlinearities.tanh, grad_clipping=100., backwards=True)
+        network = lasagne.layers.LSTMLayer(network, N_HIDDEN, nonlinearity=lasagne.nonlinearities.tanh, grad_clipping=100., backwards=True)
 
         # The l_forward layer creates an output of dimension (batch_size, SEQ_LENGTH, N_HIDDEN)
         # Since we are only interested in the final prediction, we isolate that quantity and feed it to the next layer. 
@@ -93,6 +93,9 @@ class LSTM_Analyzer(Analyzer):
         # Cost function
         cross_entro = theano.function([input_var, target_var], loss)
 
+        with open('input_funcs.txt') as f_in:
+            phrases = f_in.read().split('\n')
+
         print("Training start.")
         for epoch in range(NUM_EPOCHS):
             if (epoch+1) % 10 == 0:
@@ -110,8 +113,10 @@ class LSTM_Analyzer(Analyzer):
             print("Epoch {}: Validation Loss {}".format(epoch+1, loss_cnt/self.NUM_VALIDATION_DATA))
             logging.info("Epoch {}: Loss {}".format(epoch+1, loss_cnt/self.NUM_VALIDATION_DATA))
 
-            self.predict(CODE_SNIPPET_1, predict)
-            self.predict(CODE_SNIPPET_2, predict)
+            for phrase in phrases:
+                self.predict(phrase, predict)
+            # self.predict(CODE_SNIPPET_1, predict)
+            # self.predict(CODE_SNIPPET_2, predict)
 
     def _training_data(self):
         for rank, item in enumerate(self.WORDLIB[0:self.SIZE_TRAINING_DATA]):
@@ -205,6 +210,24 @@ class LSTM_Analyzer(Analyzer):
 
         print(output_sequence)
         logging.info(output_sequence)
+
+    def load_and_predict(self, model_name, input_files):
+        input_var = T.tensor3('inputs')
+        target_var = T.ivector('targets')
+
+        network = self._build_network(input_var)
+
+        network_output = lasagne.layers.get_output(network)
+        predict_func = theano.function([input_var], T.argmax(network_output, axis=1))
+
+        with np.load(model_name) as f:
+            param_values = [f['arr_%d' % i] for i in range(len(f.files))]
+        lasagne.layers.set_all_param_values(network, param_values)
+
+        with open(input_files, 'r') as f_in:
+            phrase_list = f_in.read().split('\n')
+        for phrase in phrase_list:
+            self.predict(phrase, predict_func)
 
     def prepare(self):
         return
