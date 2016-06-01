@@ -9,6 +9,7 @@ import logging
 import re
 import os
 import collections
+import gensim
 
 import config
 from analyzer import Analyzer
@@ -35,7 +36,7 @@ CODE_SNIPPET_2 = '''
                 if (value.charAt(0) == 't') {
                     sum++;
 '''
-
+    
 class LSTM_Analyzer(Analyzer):
     def __init__(self, data_accessor):
         self.data_accessor = data_accessor
@@ -51,8 +52,8 @@ class LSTM_Analyzer(Analyzer):
 
         # We now build the LSTM layer which takes l_in as the input layer
         # We clip the gradients at GRAD_CLIP to prevent the problem of exploding gradients. 
-        network = lasagne.layers.LSTMLayer(network, N_HIDDEN, nonlinearity=lasagne.nonlinearities.tanh, grad_clipping=100., backwards=True)
-        network = lasagne.layers.LSTMLayer(network, N_HIDDEN, nonlinearity=lasagne.nonlinearities.tanh, grad_clipping=100., backwards=True)
+        network = lasagne.layers.LSTMLayer(network, N_HIDDEN, nonlinearity=lasagne.nonlinearities.tanh)
+        network = lasagne.layers.LSTMLayer(network, N_HIDDEN, nonlinearity=lasagne.nonlinearities.tanh)
 
         # The l_forward layer creates an output of dimension (batch_size, SEQ_LENGTH, N_HIDDEN)
         # Since we are only interested in the final prediction, we isolate that quantity and feed it to the next layer. 
@@ -109,7 +110,7 @@ class LSTM_Analyzer(Analyzer):
 
             loss_cnt = 0.
             for input_batch, target_batch in self._validation_data():
-                loss_cnt += cross_entro(input_batch, target_batch)
+                loss_cnt += cross_entro(input_batch, target_batch) * len(input_batch)
             print("Epoch {}: Validation Loss {}".format(epoch+1, loss_cnt/self.NUM_VALIDATION_DATA))
             logging.info("Epoch {}: Loss {}".format(epoch+1, loss_cnt/self.NUM_VALIDATION_DATA))
 
@@ -122,6 +123,8 @@ class LSTM_Analyzer(Analyzer):
         for rank, item in enumerate(self.WORDLIB[0:self.SIZE_TRAINING_DATA]):
         # for rank, item in enumerate(self.WORDLIB[0:10]):
             print("Input {}/{}".format(rank, self.SIZE_TRAINING_DATA))
+            if len(item) < SEQ_LENGTH + 1:
+                continue
             inputs = []
             targets = []
             tmp_word_vec = np.zeros((len(item), self.vocab_size))
@@ -152,6 +155,16 @@ class LSTM_Analyzer(Analyzer):
         word_set = self.data_accessor.data_set.flatmap(lambda x: x.cmd_list).filter_by(lambda x: x['action'] in ['paste']).map(lambda x: x['content'])
         word_set = word_set.map(lambda content: filter(lambda x: ord(x)<128 and ord(x)>0, content))
         word_set = word_set.filter_by(lambda x: len(x) > 1000 and 'import java.io.IOException;' in x)
+        # def combine(cmd_list):
+        #     content = ''
+        #     for item in cmd_list:
+        #         if not item['action'] in ['insert']:
+        #             continue
+        #         content += item['content']
+        #         content += ' '
+        #     return content
+        # word_set = self.data_accessor.data_set.map(lambda x: combine(x.cmd_list))
+        # word_set = word_set.map(lambda content: filter(lambda x: ord(x)<128 and ord(x)>0, content))
         # for index, item in enumerate(self.WORDLIB):
         #     with open('data/code_template_{}.txt'.format(index), 'w') as f_out:
         #         f_out.write(item)
@@ -165,13 +178,17 @@ class LSTM_Analyzer(Analyzer):
         self.DICT = collections.defaultdict(lambda: 1)
         for item in self.WORDLIB.flatmap(lambda x: x):
             self.DICT[item] += 1
+        # self.DICT = filter(lambda wd: self.DICT[wd] > 10, self.DICT)
 
+        self.WORDLIB = self.WORDLIB.map(lambda lst: filter(lambda x: x in self.DICT, lst))
         self.wd2id = { word:index for index, word in enumerate(self.DICT) }
         self.id2wd = { index:word for index, word in enumerate(self.DICT) }
 
         self.vocab_size = len(self.DICT)
         print("Dictionary Size: {}".format(self.vocab_size))
         logging.info("Dictionary Size: {}".format(self.vocab_size))
+        with open('model/meta.pkl', 'wb') as f_out:
+            pickle.dump({'TOKEN_PATTERN':TOKEN_PATTERN,'wd2id':self.wd2id,'id2wd':self.id2wd}, f_out)
 
     def predict(self, input_sentence, predict_function):
         print("Input: {}".format(input_sentence))
@@ -207,9 +224,50 @@ class LSTM_Analyzer(Analyzer):
         output_sequence = ''
         for item in sequence:
             output_sequence += self.id2wd[np.argmax(item)]
+            output_sequence += ' '
 
         print(output_sequence)
         logging.info(output_sequence)
+
+    def validate(self, predict_function):
+        crossentropy = 0.
+        counter = 0
+        for input_batch, target_batch in self._validation_data():
+            counter += len(input_batch)
+            predictions = predict_function(input_batch)
+            for index, predict_vec in enumerate(predictions):
+                crossentropy -= np.log(predict_vec[target_batch[index]])
+        return crossentropy / float(counter)
+
+    def performance_entropy(self, model_name):
+        input_var = T.tensor3('inputs')
+        target_var = T.ivector('targets')
+
+        network = self._build_network(input_var)
+
+        network_output = lasagne.layers.get_output(network)
+        predict_func = theano.function([input_var], network_output)
+
+        with np.load(model_name) as f:
+            param_values = [f['arr_%d' % i] for i in range(len(f.files))]
+        lasagne.layers.set_all_param_values(network, param_values)
+
+        print('Model result (Crossentropy): {}'.format(self.validate(predict_func)))
+        print('Model result (Accuracy): {}'.format(self.validate_by_accuracy(predict_func)))
+        def rand_result():
+            vec = np.random.rand(self.vocab_size)
+            return vec / np.sum(vec)
+        print('Random result (Crossentropy): {}'.format(self.validate(lambda x: [rand_result() for item in x])))
+
+    def validate_by_accuracy(self, predict_function):
+        crossentropy = 0.
+        counter = 0
+        for input_batch, target_batch in self._validation_data():
+            counter += len(input_batch)
+            predictions = predict_function(input_batch)
+            for index, predict_vec in enumerate(predictions):
+                crossentropy += target_batch[index] == np.argmax(predict_vec)
+        return crossentropy / float(counter)
 
     def load_and_predict(self, model_name, input_files):
         input_var = T.tensor3('inputs')

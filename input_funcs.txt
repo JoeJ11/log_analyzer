@@ -1,4 +1,5 @@
 try { JSONObject js = new JSONObject(value.toString()); if (js.has("user_id")) { // is a blog userID.set(js.getString("user_id")); context.write(userID, new Text("t")); // text
+if (line.has("name")) { info += "0 " + line.getString("name"); id.set(line.get("_id").toString()); user.set(info); context.write(id, user);
 int sum = 0; String name = null; for (Text val : values) { String value = val.toString(); if (value.charAt(0) == 't') { sum++;
 IntWritable times = new IntWritable(1); Text userID = new Text(); String line = value.toString(); String[] terms = line.split("\t");
 Configuration conf = new Configuration(); Job sortJob = new Job(conf, "NameCount-sort"); sortJob.setJarByClass(UserCount.class); FileInputFormat.addInputPath(sortJob, tempDir); sortJob.setMapperClass
